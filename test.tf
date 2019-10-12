@@ -32,6 +32,7 @@ resource "digitalocean_droplet" "test" {
   provisioner "remote-exec" {
     when = "destroy"
     inline = [
+      "sleep 5",
       "pip install s3cmd",
       "cd /usr/src/mit-tab",
       "docker-compose run --rm web python manage.py export_stats --root s3_backup",
