@@ -1,48 +1,59 @@
-resource "digitalocean_droplet" "test" {
-  image = "docker-18-04"
-  name = "test"
-  region = "nyc3"
-  size = "s-1vcpu-2gb"
-  ssh_keys = [
-    "${var.ssh_fingerprint}"
-  ]
+resource "digitalocean_database_cluster" "tf_test_mysql" {
+  name       = "tf-test-mysql"
+  engine     = "mysql"
+  version    = "8"
+  size       = "db-s-1vcpu-1gb"
+  region     = "nyc3"
+  node_count = 1
+}
 
-  connection {
-      user = "root"
-      type = "ssh"
-      private_key = "${var.pvt_key}"
-      host=self.ipv4_address
-      timeout = "2m"
-  }
+resource "digitalocean_database_user" "tf_test_user" {
+  cluster_id = digitalocean_database_cluster.postgres-example.id
+  name       = "foobar"
+}
 
-  provisioner "remote-exec" {
-    inline = [
-      "apt-get install -y --fix-missing python-pip",
-      "pip install docker-compose",
-      "cd /usr/src",
-      "git clone https://github.com/MIT-Tab/mit-tab.git",
-      "cd mit-tab",
-      "echo 'SENTRY_DSN=${var.sentry_dsn}' >> .env.secret",
-      "echo 'TOURNAMENT_NAME=${self.name}' >> .env",
-      "docker-compose up -d",
-      "docker-compose run --rm web ./bin/setup password && docker-compose restart web && docker-compose restart nginx"
-    ]
-  }
+resource "digitalocean_app" "tf_test_app" {
+  spec {
+    name = "mittab-tf-test"
+    region="nyc3"
 
-  provisioner "remote-exec" {
-    when = "destroy"
-    inline = [
-      "sleep 5",
-      "pip install s3cmd",
-      "cd /usr/src/mit-tab",
-      "docker-compose run --rm web python manage.py export_stats --root s3_backup",
-      "mkdir -p s3_backup",
-      "cp mittab/pairing_db.sqlite3 s3_backup/${self.name}-backup.db",
-      "docker-compose run --rm web sqlite3 s3_backup/${self.name}.db 'delete from tab_scratch'",
-      "s3cmd --host=nyc3.digitaloceanspaces.com --access_key=${var.do_access_key} --host-bucket=mittab-backups.nyc3.digitaloceanspaces.com --secret_key=${var.do_access_secret} --no-mime-magic put -r s3_backup/* s3://mittab-backups/${self.name}-$(date +%Y-%m-%s)/"
-    ]
+    database {
+      name = "mysql"
+      production = true
+      engine = "MYSQL"
+      db_name = "mittab_production"
+      db_user = "mittab"
+      cluster_name = "tf-test-mysql"
+    }
+
+    service {
+      name = "web"
+      environment_slug = "docker"
+      instance_count = 1
+      instance_size_slug = "professional-xs"
+      http_port = 8000
+
+      routes {
+        path = "/"
+      }
+
+      git {
+        repo_clone_url = "https://github.com/mit-tab/mit-tab.git"
+        branch = "do-apps"
+      }
+    }
+
+    static_site {
+      name = "static"
+      environment_slug = "docker"
+      output_dir = "/var/www/tab/assets"
+      routes {
+        path = "/static"
+      }
+    }
   }
 }
+
 
 resource "digitalocean_record" "test" {
   domain = "nu-tab.com"
